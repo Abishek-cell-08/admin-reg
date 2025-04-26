@@ -212,7 +212,8 @@ export default function AdminReg() {
               </div>
               <h3 className="mt-2 text-lg font-medium text-gray-900">Registration successful!</h3>
               <p className="mt-1 text-sm text-gray-500">
-                Thank you for registering as an administrator with ShelfSpace. We'll review your information and send you access credentials shortly.
+              Thank you for registering as an administrator with ShelfSpace. We&apos;ll review your information and send you access credentials shortly.
+
               </p>
               <div className="mt-6">
                 <Link href="/" className="text-blue-800 hover:text-blue-700 font-medium">
