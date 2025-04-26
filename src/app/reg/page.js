@@ -1,4 +1,6 @@
 'use client'
+import { supabase } from '../../../utils/supabase';
+import axios from 'axios';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -10,12 +12,22 @@ export default function AdminReg() {
     email: '',
     password: '',
     confirmPassword: '',
-    institutionName: '',
+    libraryName: '',
+    library_address: '',
+    library_city:'',
+    library_country:'',
+    library_state:'',
+    phoneNumber: '',
+    gender: '',
+    role: "admin"
   });
 
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [step, setStep] = useState(1);
+  const [accessToken, setAccessToken] = useState(null);
+  const [userId, setUserId] = useState(null);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -28,50 +40,108 @@ export default function AdminReg() {
   const validate = () => {
     let tempErrors = {};
     
-    if (!formData.firstName) tempErrors.firstName = "First name is required";
-    if (!formData.lastName) tempErrors.lastName = "Last name is required";
-    
-    if (!formData.email) {
-      tempErrors.email = "Email is required";
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      tempErrors.email = "Email is invalid";
-    }
-    
-    if (!formData.password) {
-      tempErrors.password = "Password is required";
-    } else if (formData.password.length < 8) {
-      tempErrors.password = "Password must be at least 8 characters";
-    }
-    
-    if (formData.password !== formData.confirmPassword) {
-      tempErrors.confirmPassword = "Passwords do not match";
-    }
-    
-    if (!formData.institutionName) {
-      tempErrors.institutionName = "Institution name is required";
+    if (step === 1) {
+      if (!formData.firstName) tempErrors.firstName = "First name is required";
+      if (!formData.lastName) tempErrors.lastName = "Last name is required";
+      
+      if (!formData.email) {
+        tempErrors.email = "Email is required";
+      } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+        tempErrors.email = "Email is invalid";
+      }
+      
+      if (!formData.password) {
+        tempErrors.password = "Password is required";
+      } else if (formData.password.length < 8) {
+        tempErrors.password = "Password must be at least 8 characters";
+      }
+      
+      if (formData.password !== formData.confirmPassword) {
+        tempErrors.confirmPassword = "Passwords do not match";
+      }
+      
+      if (!formData.phoneNumber) {
+        tempErrors.phoneNumber = "Phone number is required";
+      } else if (!/^\d{10}$/.test(formData.phoneNumber.replace(/\D/g, ''))) {
+        tempErrors.phoneNumber = "Please enter a valid 10-digit phone number";
+      }
+      
+      if (!formData.gender) {
+        tempErrors.gender = "Please select a gender";
+      }
+    } else if (step === 2) {
+      if (!formData.libraryName) {
+        tempErrors.libraryName = "Library name is required";
+      }
     }
     
     return tempErrors;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const validationErrors = validate();
-    setErrors(validationErrors);
-    
-    if (Object.keys(validationErrors).length === 0) {
-      setIsSubmitting(true);
-      
-      // Simulate API call
-      setTimeout(() => {
-        console.log("Form submitted:", formData);
-        setIsSubmitting(false);
-        setSubmitSuccess(true);
-        // Here you would typically redirect to another page or show a success message
-      }, 1500);
-    }
-  };
+  const validationErrors = validate();
+  setErrors(validationErrors);
 
+  if (Object.keys(validationErrors).length === 0) {
+    setIsSubmitting(true);
+    
+    try {
+      if (step === 1) {
+        // Step 1: Create account in Supabase Auth
+        const { data, error } = await supabase.auth.signUp({
+          email: formData.email,
+          password: formData.password,
+        });
+
+        if (error) throw error;
+        
+        console.log("Supabase Auth Response:", data);
+        
+        // Store the access token from response
+        if (data.session && data.session.access_token) {
+          setAccessToken(data.session.access_token);
+        } else {
+          // For email confirmation required setups, there may not be a session yet
+          console.log("No session returned - email confirmation may be required");
+        }
+        
+        // Proceed to Step 2
+        setStep(2);
+        
+      } else if (step === 2) {
+        // Format data according to API expectations
+        const apiData = {
+          library_name: formData.libraryName,
+          name: `${formData.firstName} ${formData.lastName}`,
+          email: formData.email,
+          jwt: accessToken, // Using the stored access token
+          library_address: formData.library_address,
+          library_city: formData.library_city,
+          library_state: formData.library_state,
+          library_country: formData.library_country,
+          phone_number: formData.phoneNumber,
+          gender: formData.gender
+        };
+        
+        // Step 2: Send formatted data to API
+        const response = await axios.post(
+          'https://lms-temp-be.vercel.app/api/v1/admin',
+          apiData
+        );
+
+        console.log("API Response:", response.data);
+        setSubmitSuccess(true);
+      }
+    } catch (err) {
+      console.error("Error during registration:", err);
+      setErrors({ submit: err.message || "Registration failed. Please try again." });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+  };
+  
   return (
     <div className="min-h-screen bg-slate-50">
       <Head>
@@ -117,7 +187,21 @@ export default function AdminReg() {
             <p className="mt-2 text-gray-600">
               Create your administrator account to manage your library
             </p>
+            {/* Step indicator */}
+            <div className="mt-4 flex justify-center">
+              <div className={`h-2 w-12 rounded-full mr-2 ${step === 1 ? 'bg-blue-800' : 'bg-gray-300'}`}></div>
+              <div className={`h-2 w-12 rounded-full ${step === 2 ? 'bg-blue-800' : 'bg-gray-300'}`}></div>
+            </div>
+            <p className="mt-2 text-sm text-gray-500">
+              {step === 1 ? 'Step 1: Account Information' : 'Step 2: Library Information'}
+            </p>
           </div>
+
+          {errors.submit && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+              {errors.submit}
+            </div>
+          )}
 
           {submitSuccess ? (
             <div className="text-center py-8">
@@ -138,128 +222,108 @@ export default function AdminReg() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="flex gap-4">
-                <div className="w-1/2">
-                  <label htmlFor="firstName" className="block text-sm font-medium text-gray-700">
-                    First Name
-                  </label>
-                  <input
-                    id="firstName"
-                    name="firstName"
-                    type="text"
-                    value={formData.firstName}
-                    onChange={handleChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  {errors.firstName && (
-                    <p className="mt-1 text-sm text-red-600">{errors.firstName}</p>
-                  )}
-                </div>
-                <div className="w-1/2">
-                  <label htmlFor="lastName" className="block text-sm font-medium text-gray-700">
-                    Last Name
-                  </label>
-                  <input
-                    id="lastName"
-                    name="lastName"
-                    type="text"
-                    value={formData.lastName}
-                    onChange={handleChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  {errors.lastName && (
-                    <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>
-                  )}
-                </div>
-              </div>
+              {step === 1 && (
+                <>
+                  <div className="flex gap-4">
+                    <div className="w-1/2">
+                      <label htmlFor="firstName" className="block text-sm font-medium text-gray-700">First Name</label>
+                      <input name="firstName" value={formData.firstName} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                      {errors.firstName && <p className="text-sm text-red-600">{errors.firstName}</p>}
+                    </div>
+                    <div className="w-1/2">
+                      <label htmlFor="lastName" className="block text-sm font-medium text-gray-700">Last Name</label>
+                      <input name="lastName" value={formData.lastName} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                      {errors.lastName && <p className="text-sm text-red-600">{errors.lastName}</p>}
+                    </div>
+                  </div>
 
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                  Email Address
-                </label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
-                {errors.email && (
-                  <p className="mt-1 text-sm text-red-600">{errors.email}</p>
-                )}
-              </div>
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email Address</label>
+                    <input name="email" type="email" value={formData.email} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    {errors.email && <p className="text-sm text-red-600">{errors.email}</p>}
+                  </div>
 
-              <div>
-                <label htmlFor="institutionName" className="block text-sm font-medium text-gray-700">
-                  Institution Name
-                </label>
-                <input
-                  id="institutionName"
-                  name="institutionName"
-                  type="text"
-                  value={formData.institutionName}
-                  onChange={handleChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
-                {errors.institutionName && (
-                  <p className="mt-1 text-sm text-red-600">{errors.institutionName}</p>
-                )}
-              </div>
+                  <div>
+                    <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700">Phone Number</label>
+                    <input name="phoneNumber" type="tel" value={formData.phoneNumber} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    {errors.phoneNumber && <p className="text-sm text-red-600">{errors.phoneNumber}</p>}
+                  </div>
 
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                  Password
-                </label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
-                {errors.password && (
-                  <p className="mt-1 text-sm text-red-600">{errors.password}</p>
-                )}
-              </div>
+                  <div>
+                    <label htmlFor="gender" className="block text-sm font-medium text-gray-700">Gender</label>
+                    <select name="gender" value={formData.gender} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black">
+                      <option value="">Select gender</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="others">Others</option>
+                    </select>
+                    {errors.gender && <p className="text-sm text-red-600">{errors.gender}</p>}
+                  </div>
 
-              <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
-                  Confirm Password
-                </label>
-                <input
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  type="password"
-                  value={formData.confirmPassword}
-                  onChange={handleChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
-                {errors.confirmPassword && (
-                  <p className="mt-1 text-sm text-red-600">{errors.confirmPassword}</p>
-                )}
-              </div>
+                  <div>
+                    <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
+                    <input name="password" type="password" value={formData.password} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    {errors.password && <p className="text-sm text-red-600">{errors.password}</p>}
+                  </div>
 
-              <div className="flex items-center justify-between">
-                <div className="text-sm">
-                  <Link href="/login" className="font-medium text-blue-800 hover:text-blue-700">
-                    Already have an account? Sign in
-                  </Link>
-                </div>
-              </div>
+                  <div>
+                    <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">Confirm Password</label>
+                    <input name="confirmPassword" type="password" value={formData.confirmPassword} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    {errors.confirmPassword && <p className="text-sm text-red-600">{errors.confirmPassword}</p>}
+                  </div>
 
-              <div>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-800 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-                    isSubmitting ? 'opacity-70 cursor-not-allowed' : ''
-                  }`}
-                >
-                  {isSubmitting ? 'Processing...' : 'Register as Administrator'}
-                </button>
-              </div>
+                  <button type="submit" disabled={isSubmitting} className="w-full py-2 px-4 bg-blue-800 text-white font-medium rounded-md hover:bg-blue-700">
+                    {isSubmitting ? 'Creating account...' : 'Continue'}
+                  </button>
+                </>
+              )}
+
+              {step === 2 && (
+                <>
+                  <div>
+                    <label htmlFor="libraryName" className="block text-sm font-medium text-gray-700">Library Name</label>
+                    <input name="libraryName" value={formData.libraryName} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    {errors.libraryName && <p className="text-sm text-red-600">{errors.libraryName}</p>}
+                  </div>
+
+                  <div>
+                    <label htmlFor="library_address" className="block text-sm font-medium text-gray-700">Library Address</label>
+                    <input name="library_address" value={formData.library_address} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                  </div>
+
+                  <div className="flex gap-4">
+                    <div className="w-1/3">
+                      <label htmlFor="library_city" className="block text-sm font-medium text-gray-700">City</label>
+                      <input name="library_city" value={formData.library_city} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    </div>
+                    <div className="w-1/3">
+                      <label htmlFor="library_state" className="block text-sm font-medium text-gray-700">State</label>
+                      <input name="library_state" value={formData.library_state} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    </div>
+                    <div className="w-1/3">
+                      <label htmlFor="library_country" className="block text-sm font-medium text-gray-700">Country</label>
+                      <input name="library_country" value={formData.library_country} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-4">
+                    <button 
+                      type="button" 
+                      onClick={() => setStep(1)} 
+                      className="w-1/3 py-2 px-4 bg-gray-200 text-gray-800 font-medium rounded-md hover:bg-gray-300"
+                    >
+                      Back
+                    </button>
+                    <button 
+                      type="submit" 
+                      disabled={isSubmitting} 
+                      className="w-2/3 py-2 px-4 bg-green-700 text-white font-medium rounded-md hover:bg-green-600"
+                    >
+                      {isSubmitting ? 'Creating library...' : 'Create Library'}
+                    </button>
+                  </div>
+                </>
+              )}
             </form>
           )}
         </div>
