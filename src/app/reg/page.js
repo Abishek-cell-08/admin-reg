@@ -1,9 +1,11 @@
 'use client'
-import { supabase } from '../../../utils/supabase';
-import axios from 'axios';
+import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
-import { useState } from 'react';
+import axios from 'axios';
+import { supabase } from '../../../utils/supabase';
+import countryList from 'react-select-country-list';
+import { Country, State, City } from 'country-state-city';
 
 export default function AdminReg() {
   const [formData, setFormData] = useState({
@@ -14,9 +16,9 @@ export default function AdminReg() {
     confirmPassword: '',
     libraryName: '',
     library_address: '',
-    library_city:'',
-    library_country:'',
-    library_state:'',
+    library_city: '',
+    library_country: '',
+    library_state: '',
     phoneNumber: '',
     gender: '',
     role: "admin"
@@ -27,14 +29,60 @@ export default function AdminReg() {
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [step, setStep] = useState(1);
   const [accessToken, setAccessToken] = useState(null);
-  const [userId, setUserId] = useState(null);
+  
+  // Country, state, and city data
+  const [countries, setCountries] = useState([]);
+  const [states, setStates] = useState([]);
+  const [cities, setCities] = useState([]);
+  const [selectedCountry, setSelectedCountry] = useState(null);
+  const [selectedState, setSelectedState] = useState(null);
+
+  // Initialize countries on component mount
+  useEffect(() => {
+    const countryData = countryList().getData();
+    setCountries(countryData);
+  }, []);
+
+  // Update states when country changes
+  useEffect(() => {
+    if (selectedCountry) {
+      const stateData = State.getStatesOfCountry(selectedCountry.value);
+      setStates(stateData);
+    } else {
+      setStates([]);
+    }
+    setCities([]); // Reset cities when country changes
+  }, [selectedCountry]);
+
+  // Update cities when state changes
+  useEffect(() => {
+    if (selectedCountry && selectedState) {
+      const cityData = City.getCitiesOfState(selectedCountry.value, selectedState.isoCode);
+      setCities(cityData);
+    } else {
+      setCities([]);
+    }
+  }, [selectedState, selectedCountry]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData({
-      ...formData,
+    setFormData(prev => ({
+      ...prev,
       [name]: value,
-    });
+    }));
+
+    if (name === 'library_country') {
+      const country = countries.find(c => c.label === value);
+      setSelectedCountry(country || null);
+      setSelectedState(null);
+      // Reset state and city when country changes
+      setFormData(prev => ({ ...prev, library_state: '', library_city: '' }));
+    } else if (name === 'library_state') {
+      const state = states.find(s => s.name === value);
+      setSelectedState(state || null);
+      // Reset city when state changes
+      setFormData(prev => ({ ...prev, library_city: '' }));
+    }
   };
 
   const validate = () => {
@@ -62,8 +110,8 @@ export default function AdminReg() {
       
       if (!formData.phoneNumber) {
         tempErrors.phoneNumber = "Phone number is required";
-      } else if (!/^\d{10}$/.test(formData.phoneNumber.replace(/\D/g, ''))) {
-        tempErrors.phoneNumber = "Please enter a valid 10-digit phone number";
+      } else if (!/^\d{10,15}$/.test(formData.phoneNumber.replace(/\D/g, ''))) { // Allow more digits for international numbers
+        tempErrors.phoneNumber = "Please enter a valid phone number";
       }
       
       if (!formData.gender) {
@@ -73,6 +121,16 @@ export default function AdminReg() {
       if (!formData.libraryName) {
         tempErrors.libraryName = "Library name is required";
       }
+      if (!formData.library_country) { // Check for country name in formData
+        tempErrors.library_country = "Country is required";
+      }
+      // Optional: add validation for state and city if they are mandatory
+      if (!formData.library_state && states.length > 0) { // If states are available for the country, one should be selected
+        tempErrors.library_state = "State/Province is required";
+      }
+      if (!formData.library_city) {
+        tempErrors.library_city = "City is required";
+      }
     }
     
     return tempErrors;
@@ -80,66 +138,71 @@ export default function AdminReg() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-  const validationErrors = validate();
-  setErrors(validationErrors);
+    const validationErrors = validate();
+    setErrors(prev => ({...prev, ...validationErrors, submit: null})); // Clear previous submit error
 
-  if (Object.keys(validationErrors).length === 0) {
-    setIsSubmitting(true);
-    
-    try {
-      if (step === 1) {
-        // Step 1: Create account in Supabase Auth
-        const { data, error } = await supabase.auth.signUp({
-          email: formData.email,
-          password: formData.password,
-        });
+    if (Object.keys(validationErrors).length === 0) {
+      setIsSubmitting(true);
+      
+      try {
+        if (step === 1) {
+          const { data, error } = await supabase.auth.signUp({
+            email: formData.email,
+            password: formData.password,
+          });
 
-        if (error) throw error;
-        
-        console.log("Supabase Auth Response:", data);
-        
-        // Store the access token from response
-        if (data.session && data.session.access_token) {
-          setAccessToken(data.session.access_token);
-        } else {
-          // For email confirmation required setups, there may not be a session yet
-          console.log("No session returned - email confirmation may be required");
+          if (error) throw error;
+          
+          console.log("Supabase Auth Response:", data);
+          
+          if (data.session && data.session.access_token) {
+            setAccessToken(data.session.access_token);
+          } else {
+            console.log("No session returned - email confirmation may be required or user already exists.");
+            // Check if user exists and needs to confirm email
+            if (data.user && data.user.identities && data.user.identities.length === 0) {
+                setErrors(prev => ({...prev, submit: "User already exists or email confirmation pending. Please check your email or try logging in."}));
+                setIsSubmitting(false);
+                return; // Stop submission
+            }
+          }
+          setStep(2);
+          
+        } else if (step === 2) {
+          const apiData = {
+            library_name: formData.libraryName,
+            name: `${formData.firstName} ${formData.lastName}`,
+            email: formData.email,
+            jwt: accessToken,
+            library_address: formData.library_address,
+            library_city: formData.library_city,
+            library_state: formData.library_state,
+            library_country: formData.library_country,
+            phone_number: formData.phoneNumber,
+            gender: formData.gender
+          };
+          
+          const response = await axios.post(
+            'https://lms-temp-be.vercel.app/api/v1/admin',
+            apiData
+          );
+
+          console.log("API Response:", response.data);
+          setSubmitSuccess(true);
         }
-        
-        // Proceed to Step 2
-        setStep(2);
-        
-      } else if (step === 2) {
-        // Format data according to API expectations
-        const apiData = {
-          library_name: formData.libraryName,
-          name: `${formData.firstName} ${formData.lastName}`,
-          email: formData.email,
-          jwt: accessToken, // Using the stored access token
-          library_address: formData.library_address,
-          library_city: formData.library_city,
-          library_state: formData.library_state,
-          library_country: formData.library_country,
-          phone_number: formData.phoneNumber,
-          gender: formData.gender
-        };
-        
-        // Step 2: Send formatted data to API
-        const response = await axios.post(
-          'https://lms-temp-be.vercel.app/api/v1/admin',
-          apiData
-        );
-
-        console.log("API Response:", response.data);
-        setSubmitSuccess(true);
+      } catch (err) {
+        console.error("Error during registration:", err);
+        let submitErrorMessage = "Registration failed. Please try again.";
+        if (err.response && err.response.data && err.response.data.message) {
+            submitErrorMessage = err.response.data.message;
+        } else if (err.message) {
+            submitErrorMessage = err.message;
+        }
+        setErrors(prev => ({ ...prev, submit: submitErrorMessage }));
+      } finally {
+        setIsSubmitting(false);
       }
-    } catch (err) {
-      console.error("Error during registration:", err);
-      setErrors({ submit: err.message || "Registration failed. Please try again." });
-    } finally {
-      setIsSubmitting(false);
     }
-  }
   };
   
   return (
@@ -150,7 +213,6 @@ export default function AdminReg() {
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
-      {/* Navigation */}
       <nav className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
@@ -161,33 +223,21 @@ export default function AdminReg() {
                 </Link>
               </div>
               <div className="hidden md:ml-10 md:flex md:space-x-8">
-                <Link href="/" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">
-                  Home
-                </Link>
-                <Link href="/features" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">
-                  Features
-                </Link>
-                <Link href="/about" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">
-                  About
-                </Link>
-                <Link href="/contact" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">
-                  Contact
-                </Link>
+                <Link href="/" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">Home</Link>
+                <Link href="/features" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">Features</Link>
+                <Link href="/about" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">About</Link>
+                <Link href="/contact" className="text-gray-500 hover:text-gray-700 font-medium px-1 pt-1">Contact</Link>
               </div>
             </div>
           </div>
         </div>
       </nav>
 
-      {/* Registration Form */}
       <div className="max-w-2xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
         <div className="bg-white shadow-md rounded-lg p-8">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-900">Administrator Registration</h1>
-            <p className="mt-2 text-gray-600">
-              Create your administrator account to manage your library
-            </p>
-            {/* Step indicator */}
+            <p className="mt-2 text-gray-600">Create your administrator account to manage your library</p>
             <div className="mt-4 flex justify-center">
               <div className={`h-2 w-12 rounded-full mr-2 ${step === 1 ? 'bg-blue-800' : 'bg-gray-300'}`}></div>
               <div className={`h-2 w-12 rounded-full ${step === 2 ? 'bg-blue-800' : 'bg-gray-300'}`}></div>
@@ -212,13 +262,10 @@ export default function AdminReg() {
               </div>
               <h3 className="mt-2 text-lg font-medium text-gray-900">Registration successful!</h3>
               <p className="mt-1 text-sm text-gray-500">
-              Thank you for registering as an administrator with ShelfSpace.
-
+                Thank you for registering as an administrator with ShelfSpace. Please check your email to confirm your account if required.
               </p>
               <div className="mt-6">
-                <Link href="/" className="text-blue-800 hover:text-blue-700 font-medium">
-                  Return to homepage
-                </Link>
+                <Link href="/" className="text-blue-800 hover:text-blue-700 font-medium">Return to homepage</Link>
               </div>
             </div>
           ) : (
@@ -272,7 +319,6 @@ export default function AdminReg() {
                     <input name="confirmPassword" type="password" value={formData.confirmPassword} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
                     {errors.confirmPassword && <p className="text-sm text-red-600">{errors.confirmPassword}</p>}
                   </div>
-
                   <button type="submit" disabled={isSubmitting} className="w-full py-2 px-4 bg-blue-800 text-white font-medium rounded-md hover:bg-blue-700">
                     {isSubmitting ? 'Creating account...' : 'Continue'}
                   </button>
@@ -288,23 +334,58 @@ export default function AdminReg() {
                   </div>
 
                   <div>
-                    <label htmlFor="library_address" className="block text-sm font-medium text-gray-700">Library Address</label>
+                    <label htmlFor="library_address" className="block text-sm font-medium text-gray-700">Library Address (Street)</label>
                     <input name="library_address" value={formData.library_address} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
                   </div>
 
-                  <div className="flex gap-4">
-                    <div className="w-1/3">
-                      <label htmlFor="library_city" className="block text-sm font-medium text-gray-700">City</label>
-                      <input name="library_city" value={formData.library_city} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
-                    </div>
-                    <div className="w-1/3">
-                      <label htmlFor="library_state" className="block text-sm font-medium text-gray-700">State</label>
-                      <input name="library_state" value={formData.library_state} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
-                    </div>
-                    <div className="w-1/3">
-                      <label htmlFor="library_country" className="block text-sm font-medium text-gray-700">Country</label>
-                      <input name="library_country" value={formData.library_country} onChange={handleChange} className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black" />
-                    </div>
+                  <div>
+                    <label htmlFor="library_country" className="block text-sm font-medium text-gray-700">Country</label>
+                    <select 
+                      name="library_country" 
+                      value={formData.library_country} 
+                      onChange={handleChange} 
+                      className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black"
+                    >
+                      <option value="">Select country</option>
+                      {countries.map((country) => (
+                        <option key={country.value} value={country.label}>{country.label}</option>
+                      ))}
+                    </select>
+                    {errors.library_country && <p className="text-sm text-red-600">{errors.library_country}</p>}
+                  </div>
+
+                  <div>
+                    <label htmlFor="library_state" className="block text-sm font-medium text-gray-700">State/Province</label>
+                    <select 
+                      name="library_state" 
+                      value={formData.library_state} 
+                      onChange={handleChange} 
+                      className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black"
+                      disabled={!selectedCountry}
+                    >
+                      <option value="">Select state</option>
+                      {states.map((state) => (
+                        <option key={state.isoCode} value={state.name}>{state.name}</option>
+                      ))}
+                    </select>
+                    {errors.library_state && <p className="text-sm text-red-600">{errors.library_state}</p>}
+                  </div>
+
+                  <div>
+                    <label htmlFor="library_city" className="block text-sm font-medium text-gray-700">City</label>
+                    <select 
+                      name="library_city" 
+                      value={formData.library_city} 
+                      onChange={handleChange} 
+                      className="mt-1 block w-full border rounded-md shadow-sm py-2 px-3 text-black"
+                      disabled={!selectedState}
+                    >
+                      <option value="">Select city</option>
+                      {cities.map((city) => (
+                        <option key={city.name} value={city.name}>{city.name}</option>
+                      ))}
+                    </select>
+                    {errors.library_city && <p className="text-sm text-red-600">{errors.library_city}</p>}
                   </div>
                   
                   <div className="flex gap-4">
@@ -330,28 +411,17 @@ export default function AdminReg() {
         </div>
       </div>
 
-      {/* Footer */}
       <footer className="bg-white mt-12">
         <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
           <nav className="flex flex-wrap justify-center space-x-6">
-            <Link href="/about" className="text-base text-gray-500 hover:text-gray-900">
-              About
-            </Link>
-            <Link href="/features" className="text-base text-gray-500 hover:text-gray-900">
-              Features
-            </Link>
-            <Link href="/privacy" className="text-base text-gray-500 hover:text-gray-900">
-              Privacy
-            </Link>
-            <Link href="/terms" className="text-base text-gray-500 hover:text-gray-900">
-              Terms
-            </Link>
-            <Link href="/contact" className="text-base text-gray-500 hover:text-gray-900">
-              Contact
-            </Link>
+            <Link href="/about" className="text-base text-gray-500 hover:text-gray-900">About</Link>
+            <Link href="/features" className="text-base text-gray-500 hover:text-gray-900">Features</Link>
+            <Link href="/privacy" className="text-base text-gray-500 hover:text-gray-900">Privacy</Link>
+            <Link href="/terms" className="text-base text-gray-500 hover:text-gray-900">Terms</Link>
+            <Link href="/contact" className="text-base text-gray-500 hover:text-gray-900">Contact</Link>
           </nav>
           <p className="mt-8 text-center text-base text-gray-400">
-            &copy; {new Date().getFullYear()} ShelfSpace. All rights reserved.
+            © {new Date().getFullYear()} ShelfSpace. All rights reserved.
           </p>
         </div>
       </footer>
